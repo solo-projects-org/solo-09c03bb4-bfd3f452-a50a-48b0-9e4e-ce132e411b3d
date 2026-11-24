@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}鸟类普查名录对照{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<nav>
+  <strong>保护区鸟类普查</strong>
+  <a href="{{ url_for('main.index') }}">首页/上传</a>
+  <a href="{{ url_for('main.aggregate_form') }}">按年汇总</a>
+  <a href="{{ url_for('main.records_page') }}">记录复核</a>
+  <a href="{{ url_for('main.mapping_page') }}">名录对照</a>
+</nav>
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+    <div class="flashes">
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    </div>
+  {% endif %}
+{% endwith %}
+<main>
+{% block content %}{% endblock %}
+</main>
+</body>
+</html>

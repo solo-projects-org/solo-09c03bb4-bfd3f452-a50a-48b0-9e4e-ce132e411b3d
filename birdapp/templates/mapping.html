@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>名录对照（当前最新版 v{{ latest }}）</h1>
+<p>每行表示「起版 v → v+1 时旧学名变为下一版学名」；未列出的名称沿用。
+   更换对照请见<a href="{{ url_for('main.index') }}">首页</a>的上传表单，上传即整份替换。</p>
+{% if not rows %}
+<p>名录对照为空，所有学名按原样沿用。</p>
+{% else %}
+<table>
+  <tr><th>起版</th><th>旧学名</th><th>下一版学名</th></tr>
+  {% for row in rows %}
+  <tr>
+    <td>v{{ row.from_version }}</td>
+    <td>{{ row.old_name }}</td>
+    <td>{{ row.next_name }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% endif %}
+{% endblock %}

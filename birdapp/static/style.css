@@ -1,0 +1,54 @@
+body {
+  font-family: "Helvetica Neue", "PingFang SC", "Microsoft YaHei", sans-serif;
+  margin: 0;
+  color: #222;
+  background: #f6f7f8;
+}
+nav {
+  background: #2c5f2d;
+  padding: 10px 20px;
+}
+nav strong { color: #fff; margin-right: 16px; }
+nav a { color: #d9ecd9; margin-right: 14px; text-decoration: none; }
+nav a:hover { color: #fff; text-decoration: underline; }
+main { padding: 20px 28px; max-width: 1100px; }
+h1 { font-size: 1.4rem; }
+h2 { font-size: 1.1rem; margin-top: 1.4em; }
+table {
+  border-collapse: collapse;
+  background: #fff;
+  margin: 10px 0;
+}
+th, td {
+  border: 1px solid #ccc;
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 0.92rem;
+}
+th { background: #eef3ee; }
+.card {
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 14px 18px;
+  margin: 14px 0;
+}
+.flash { padding: 8px 14px; margin: 6px 0; border-radius: 4px; }
+.flash.ok { background: #e2f4e3; border: 1px solid #8fca94; }
+.flash.error { background: #fbe4e4; border: 1px solid #e0a0a0; }
+.flashes { padding: 10px 28px 0; max-width: 1100px; }
+.species-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 4px 12px;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 12px 16px;
+  margin: 10px 0;
+}
+button { cursor: pointer; padding: 5px 14px; }
+form.inline { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+form.inline input[name="confirmed_name"] { width: 200px; }
+form.inline input.ver { width: 70px; }
+code { background: #eee; padding: 1px 5px; border-radius: 3px; }

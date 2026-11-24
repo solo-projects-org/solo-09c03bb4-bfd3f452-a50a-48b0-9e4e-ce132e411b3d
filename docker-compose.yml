@@ -1,0 +1,15 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      # 生产环境请改为随机长字符串（用于会话签名）
+      BIRDAPP_SECRET: ${BIRDAPP_SECRET:-dev-secret-change-me}
+      BIRDAPP_DB: /data/birdapp.db
+    volumes:
+      - birdapp-data:/data
+    restart: unless-stopped
+
+volumes:
+  birdapp-data:

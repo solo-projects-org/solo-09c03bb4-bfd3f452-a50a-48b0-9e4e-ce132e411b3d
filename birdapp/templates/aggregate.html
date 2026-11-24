@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>按年汇总（最新版 v{{ latest }}）</h1>
+{% if not names %}
+<p>还没有可用数据，请先在<a href="{{ url_for('main.index') }}">首页</a>上传普查记录和名录对照。</p>
+{% else %}
+<form method="post" action="{{ url_for('main.aggregate_run') }}">
+  <p>
+    <button type="button" id="sel-all">全选</button>
+    <button type="button" id="sel-none">全不选</button>
+    <button type="submit">汇总</button>
+  </p>
+  <div class="species-grid">
+    {% for name in names %}
+    <label>
+      <input type="checkbox" name="species" value="{{ name }}"
+             {% if result and name in result.group %}checked{% endif %}>
+      {{ name }}
+    </label>
+    {% endfor %}
+  </div>
+</form>
+{% endif %}
+
+{% if result %}
+<h2>汇总结果（已选 {{ result.group|length }} 种，按最新版 v{{ result.latest_version }} 换算）</h2>
+{% if result.years %}
+<table>
+  <tr><th>年份</th><th>最少只数</th><th>最多只数</th><th>差额</th><th>差额记录</th></tr>
+  {% for y in result.years %}
+  <tr>
+    <td>{{ y.year }}</td>
+    <td>{{ y.min }}</td>
+    <td>{{ y.max }}</td>
+    <td>{{ y.max - y.min }}</td>
+    <td>{% if y.diff_records %}{{ y.diff_records|join("、") }}{% else %}—{% endif %}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>所选物种没有任何年份的普查记录。</p>
+{% endif %}
+
+{% if result.diff_records %}
+<h2>造成差额的原记录</h2>
+<p>这些记录换算到最新版后只有部分可达学名落在所选组内，计入「最多」但不计入「最少」。</p>
+<table>
+  <tr>
+    <th>记录号</th><th>年份</th><th>原学名</th><th>原版</th><th>只数</th>
+    <th>确认学名</th><th>确认版</th><th>最新版可达学名</th>
+  </tr>
+  {% for d in result.diff_records %}
+  <tr>
+    <td>{{ d.record_id }}</td>
+    <td>{{ d.year }}</td>
+    <td>{{ d.sci_name }}</td>
+    <td>v{{ d.version }}</td>
+    <td>{{ d.count }}</td>
+    <td>{{ d.confirmed_name or "—" }}</td>
+    <td>{% if d.confirmed_version %}v{{ d.confirmed_version }}{% else %}—{% endif %}</td>
+    <td>{{ d.reachable|join("、") }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p>无差额记录：最少与最多一致。</p>
+{% endif %}
+{% endif %}
+
+<script>
+document.getElementById("sel-all").addEventListener("click", function () {
+  document.querySelectorAll("input[name=species]").forEach(function (c) { c.checked = true; });
+});
+document.getElementById("sel-none").addEventListener("click", function () {
+  document.querySelectorAll("input[name=species]").forEach(function (c) { c.checked = false; });
+});
+</script>
+{% endblock %}

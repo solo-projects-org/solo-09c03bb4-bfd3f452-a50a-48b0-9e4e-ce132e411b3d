@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+<h1>记录复核</h1>
+<p>为整条记录确认一个<strong>从原名可追到</strong>的学名和版号（v原版 ≤ 确认版 ≤ v{{ latest }}），
+   确认后汇总从确认版换算。「最新版可达」列显示该记录按当前起点换算到最新版的学名集合。</p>
+{% if not rows %}
+<p>暂无普查记录，请先在<a href="{{ url_for('main.index') }}">首页</a>上传。</p>
+{% else %}
+<table>
+  <tr>
+    <th>记录号</th><th>年份</th><th>原学名</th><th>原版</th><th>只数</th>
+    <th>已确认</th><th>最新版可达</th><th>复核操作</th>
+  </tr>
+  {% for row in rows %}
+  {% set rec = row.rec %}
+  <tr>
+    <td>{{ rec.record_id }}</td>
+    <td>{{ rec.year }}</td>
+    <td>{{ rec.sci_name }}</td>
+    <td>v{{ rec.version }}</td>
+    <td>{{ rec.count }}</td>
+    <td>
+      {% if rec.confirmed_name %}{{ rec.confirmed_name }}（v{{ rec.confirmed_version }}）
+      {% else %}—{% endif %}
+    </td>
+    <td>{{ row.reachable|join("、") }}</td>
+    <td>
+      <form method="post" class="inline"
+            action="{{ url_for('main.confirm', record_id=rec.record_id) }}">
+        <input name="confirmed_name" list="known-names" placeholder="确认学名"
+               value="{{ rec.confirmed_name or '' }}" required>
+        <input name="confirmed_version" type="number" class="ver"
+               min="{{ rec.version }}" max="{{ latest }}"
+               value="{{ rec.confirmed_version or latest }}" required>
+        <button type="submit" name="action" value="save">确认</button>
+        {% if rec.confirmed_name %}
+        <button type="submit" name="action" value="clear" formnovalidate>清除</button>
+        {% endif %}
+      </form>
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+<datalist id="known-names">
+  {% for name in all_names %}<option value="{{ name }}">{% endfor %}
+</datalist>
+{% endif %}
+{% endblock %}
