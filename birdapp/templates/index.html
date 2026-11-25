@@ -11,6 +11,8 @@
   <h2>上传普查记录 CSV</h2>
   <p>表头：<code>记录号,年份,名录版,学名,只数</code>。按记录号去重更新；
      同名同版重传只更新年份和只数，原名/原版变更会清除该记录已有的复核确认。</p>
+  <p>明细与按年分组小计在同一个事务内写入；写入失败整批回滚，原有明细和
+     汇总结果保持不变。</p>
   <form method="post" action="{{ url_for('main.upload_records') }}"
         enctype="multipart/form-data">
     <input type="file" name="file" accept=".csv" required>
@@ -23,7 +25,8 @@
   <p>表头：<code>起版,旧学名,下一版学名</code>。每行表示「起版 v → v+1 时旧学名变为下一版学名」；
      同一（起版, 旧学名）多行表示拆种，多个旧学名指向同一名称表示并种，未列出的名称沿用。</p>
   <p>上传即整份替换旧对照：替换前只校验<strong>已确认</strong>记录能否按新对照从原名追到确认版，
-     未复核的明细不参与校验；若有已确认记录追不到，将列出记录号并保留旧表。</p>
+     未复核的明细不参与校验；若有已确认记录追不到，将列出记录号并保留旧表。
+     更换成功后，即使最新版号没变，年表也会立即改用新对照计算；小计不重建、不重扫明细。</p>
   <form method="post" action="{{ url_for('main.upload_mapping') }}"
         enctype="multipart/form-data">
     <input type="file" name="file" accept=".csv" required>

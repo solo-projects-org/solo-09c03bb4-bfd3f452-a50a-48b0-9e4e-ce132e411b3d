@@ -24,6 +24,8 @@
 
 {% if result %}
 <h2>汇总结果（已选 {{ result.group|length }} 种，按最新版 v{{ result.latest_version }} 换算）</h2>
+<p class="hint">年表由按年分组小计汇总得出；只有出现部分命中（造成差额）的起点组时，
+   才逐条读取相关原记录。</p>
 {% if result.years %}
 <table>
   <tr><th>年份</th><th>最少只数</th><th>最多只数</th><th>差额</th><th>差额记录</th></tr>

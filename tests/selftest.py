@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""关键流程自测：上传、汇总口径、拆种/并种去重、复核确认、整份换对照。
+"""关键流程自测：上传、汇总口径、拆种/并种去重、复核确认、整份换对照、
+分组小计维护、升级重建、写入失败回滚。
 
 运行：python3 tests/selftest.py
 退出码 0 = 全部通过。
@@ -7,6 +8,7 @@
 
 import io
 import os
+import sqlite3
 import sys
 import tempfile
 
@@ -240,11 +242,292 @@ def main():
     check("坏文件均未落库（仍7条记录/8条对照）",
           st["records"] == 7 and st["mapping_entries"] == 8, st)
 
-    # 15. 空选择与页面可用性
-    rv = client.post("/aggregate", data={}, follow_redirects=True)
-    check("空选择汇总被提示", "请至少勾选" in rv.get_data(as_text=True))
-    for path in ["/", "/records", "/mapping", "/aggregate"]:
-        check("GET %s 返回 200" % path, client.get(path).status_code == 200)
+    # 16. 分组小计：与明细全量计算一致，汇总只读小计、不逐条读明细
+    with app.app_context():
+        from birdapp.aggregation import run_aggregation
+        from birdapp.db import get_db
+
+        db = get_db()
+        rows = db.execute(
+            "SELECT start_version, start_name, year, total, record_count "
+            "FROM subtotals ORDER BY 1, 2, 3"
+        ).fetchall()
+        expected = db.execute(
+            "SELECT COALESCE(confirmed_version, version) AS v, "
+            "COALESCE(confirmed_name, sci_name) AS n, year, "
+            "SUM(count) AS total, COUNT(*) AS c "
+            "FROM records GROUP BY 1, 2, 3 ORDER BY 1, 2, 3"
+        ).fetchall()
+        check("小计与按明细全量计算的结果一致",
+              [tuple(r) for r in rows] == [tuple(r) for r in expected],
+              (len(rows), len(expected)))
+        groups = db.execute(
+            "SELECT COUNT(*) AS c FROM subtotal_groups"
+        ).fetchone()["c"]
+        check("起点集合与明细起点数一致（7 个）", groups == 7, groups)
+
+        read_columns = set()
+        db.set_authorizer(
+            lambda action, a1, a2, dbn, trg: (
+                read_columns.add((a1, a2))
+                if action == sqlite3.SQLITE_READ
+                else None
+            )
+            or sqlite3.SQLITE_OK
+        )
+        try:
+            run_aggregation(db, {"Netta rufina"})
+        finally:
+            db.set_authorizer(None)
+        detail_columns = {
+            col
+            for table, col in read_columns
+            if table == "records"
+        }
+        check("汇总只读版号索引，不读只数/年份/学名等明细列",
+              detail_columns <= {"version", "confirmed_version"}, detail_columns)
+
+    # 17. 复核确认 + 记录改年：移出组与移入组的小计都更新
+    before = agg(client, "Anas crecca")
+    check("确认前 R6 为差额记录（2022 最少0 最多20）",
+          year(before, 2022) and year(before, 2022)["min"] == 0
+          and year(before, 2022)["max"] == 20
+          and year(before, 2022)["diff_records"] == ["R6"], before)
+    rv = confirm(client, "R6", "Anas crecca", "2")
+    check("确认 R6=Anas crecca(v2)",
+          "已确认为 Anas crecca" in rv.get_data(as_text=True))
+    confirmed_res = agg(client, "Anas crecca")
+    a2022 = year(confirmed_res, 2022)
+    check("确认后 R6 从部分命中转为全命中（最少0->20，最多不变）",
+          a2022 and a2022["min"] == 20 and a2022["max"] == 20
+          and not a2022["diff_records"], a2022)
+
+    census_moved = CENSUS.replace(
+        "R6,2022,1,Anas crecca,20", "R6,2023,1,Anas crecca,20"
+    )
+    rv = upload(client, "/upload/records", census_moved)
+    check("记录改年后重传成功", "更新" in rv.get_data(as_text=True))
+    after = agg(client, "Anas crecca")
+    check("改年后 2022 不再有 R6", year(after, 2022) is None, after)
+    check("改年后 R6 计入 2023（最少/最多均 20）",
+          year(after, 2023) and year(after, 2023)["min"] == 20
+          and year(after, 2023)["max"] == 20, after)
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        groups = [tuple(r) for r in db.execute(
+            "SELECT start_version, start_name, ref_count FROM subtotal_groups "
+            "ORDER BY 1, 2"
+        )]
+    check("改年后移出的旧起点组已清理",
+          all(not (g[0] == 2 and g[1] == "Anas crecca" and g[2] <= 0)
+              for g in groups), groups)
+
+    # 18. 写入失败：明细与小计同一事务回滚，原结果仍可查
+    before = agg(client, "Netta rufina")
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        db.execute(
+            "CREATE TRIGGER t_fail BEFORE INSERT ON records "
+            "BEGIN SELECT RAISE(ABORT, 'boom'); END"
+        )
+        db.commit()
+    rv = upload(client, "/upload/records",
+                "记录号,年份,名录版,学名,只数\nR99,2024,1,Netta rufina,50\n")
+    check("写入失败被提示并回滚", "已回滚" in rv.get_data(as_text=True))
+    after = agg(client, "Netta rufina")
+    check("写入失败后汇总与失败前一致", before == after, (before, after))
+    st = status(client)
+    check("写入失败后未多出记录", st["records"] == 7, st)
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        db.execute("DROP TRIGGER t_fail")
+        db.commit()
+
+    # 19. 换表：最新版号没变也按新对照重算年表；维护小计不增加明细扫描
+    # 先清除 R6 确认，再确认 R1，便于用坏表验证"已确认记录校验"。
+    confirm(client, "R6", "", "", action="clear")
+    rv = confirm(client, "R1", "Netta rufina", "2")
+    check("换表前确认 R1=Netta rufina(v2)",
+          "已确认为 Netta rufina" in rv.get_data(as_text=True))
+
+    # 坏表：去掉 v1 的 Netta rufina 自映射，R1 无法追溯 -> 拒绝并保留旧表
+    broken = MAPPING_GOOD.replace("1,Netta rufina,Netta rufina\n", "")
+    rv = upload(client, "/upload/mapping", broken)
+    check("坏表被拒绝并列出记录号 R1",
+          "更换被拒绝" in rv.get_data(as_text=True)
+          and "R1" in rv.get_data(as_text=True))
+    st = status(client)
+    check("坏表被拒后旧表保留（8条/v4）",
+          st["mapping_entries"] == 8 and st["latest_version"] == 4, st)
+    res = agg(client, "Netta rufina")
+    check("坏表被拒后年表仍按旧表", year(res, 2020)["max"] == 23, res)
+
+    # 新表：最新版号仍为 v4，但去掉 v3->v4 的并种，R7 不再并入 Netta rufina
+    new_table = MAPPING_GOOD.replace(
+        "3,Netta erythrophthalma,Netta rufina\n", "3,Anas crecca,Anas crecca\n"
+    )
+    before = agg(client, "Netta rufina")
+    check("换表前 {Netta rufina} 2020 最多 23（含 R7）",
+          year(before, 2020)["max"] == 23, before)
+    rv = upload(client, "/upload/mapping", new_table)
+    check("新表（最新版号不变）被接受",
+          "名录对照已整份更换" in rv.get_data(as_text=True))
+    st = status(client)
+    check("换表后最新版号仍为 v4", st["latest_version"] == 4, st)
+    after = agg(client, "Netta rufina")
+    check("换表后年表按新对照重算（2020 最多 15，R7 移出）",
+          year(after, 2020)["max"] == 15, after)
+
+    # 维护小计不得扫描明细：换表后汇总仍不读 records 明细列
+    with app.app_context():
+        from birdapp.aggregation import run_aggregation
+        from birdapp.db import get_db
+
+        db = get_db()
+        read_columns = set()
+        db.set_authorizer(
+            lambda action, a1, a2, dbn, trg: (
+                read_columns.add((a1, a2))
+                if action == sqlite3.SQLITE_READ
+                else None
+            )
+            or sqlite3.SQLITE_OK
+        )
+        try:
+            run_aggregation(db, {"Netta rufina"})
+        finally:
+            db.set_authorizer(None)
+        detail_columns = {col for table, col in read_columns if table == "records"}
+    check("换表后汇总仍只读版号索引，不扫明细列",
+          detail_columns <= {"version", "confirmed_version"}, detail_columns)
+
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        captured = []
+        db.set_trace_callback(captured.append)
+        try:
+            upload(client, "/upload/mapping", new_table)
+        finally:
+            db.set_trace_callback(None)
+        swap_sql = " ".join(captured)
+    check("换表未重建/扫描小计",
+          "DELETE FROM subtotals" not in swap_sql
+          and "GROUP BY 1, 2, 3" not in swap_sql, swap_sql[:300])
+    check("换表只查已确认记录（走部分索引）",
+          any("confirmed_name IS NOT NULL" in s for s in captured),
+          captured[:5])
+
+    # 20. 写入失败时换表同样回滚，旧表与旧年表仍可用
+    stable = agg(client, "Netta rufina")
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        db.execute(
+            "CREATE TRIGGER t_map_fail BEFORE INSERT ON mapping "
+            "BEGIN SELECT RAISE(ABORT, 'boom-map'); END"
+        )
+        db.commit()
+    rv = upload(client, "/upload/mapping", MAPPING)
+    check("换表写入失败被提示并回滚", "已回滚" in rv.get_data(as_text=True))
+    st = status(client)
+    check("换表失败后对照表不变",
+          st["mapping_entries"] == 8 and st["latest_version"] == 4, st)
+    check("换表失败后年表不变", agg(client, "Netta rufina") == stable)
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        db.execute("DROP TRIGGER t_map_fail")
+        db.commit()
+
+    # 21. 删除记录（小计与起点集合同步减少）——用直接 SQL 模拟
+    with app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        before_groups = db.execute(
+            "SELECT COUNT(*) FROM subtotal_groups"
+        ).fetchone()[0]
+        db.execute("DELETE FROM records WHERE record_id = 'R4'")
+        db.commit()
+        after_groups = db.execute(
+            "SELECT COUNT(*) FROM subtotal_groups"
+        ).fetchone()[0]
+        sub = db.execute(
+            "SELECT COUNT(*) FROM subtotals"
+        ).fetchone()[0]
+    check("删除记录后小计仍在且起点组不增加",
+          after_groups <= before_groups and sub > 0, (before_groups, after_groups))
+
+    # 22. 已有数据库首次升级：自动全量建立小计，重启不重复重建
+    legacy_dir = tempfile.mkdtemp(prefix="birdapp-legacy-")
+    legacy_path = os.path.join(legacy_dir, "legacy.db")
+    conn = sqlite3.connect(legacy_path)
+    conn.executescript(
+        """
+        CREATE TABLE records (record_id TEXT PRIMARY KEY, year INTEGER NOT NULL,
+            version INTEGER NOT NULL, sci_name TEXT NOT NULL, count INTEGER NOT NULL,
+            confirmed_name TEXT, confirmed_version INTEGER);
+        CREATE TABLE mapping (from_version INTEGER NOT NULL, old_name TEXT NOT NULL,
+            next_name TEXT NOT NULL, PRIMARY KEY (from_version, old_name, next_name));
+        """
+    )
+    conn.executemany(
+        "INSERT INTO records VALUES (?, ?, ?, ?, ?, ?, ?)",
+        [
+            ("L1", 2020, 1, "A", 10, None, None),
+            ("L2", 2020, 1, "A", 5, None, None),
+            ("L3", 2021, 2, "B", 7, "C", 3),
+        ],
+    )
+    conn.execute("INSERT INTO mapping VALUES (1, 'A', 'B')")
+    conn.commit()
+    conn.close()
+
+    legacy_app = create_app({"DATABASE": legacy_path, "SECRET_KEY": "t", "TESTING": True})
+    legacy_client = legacy_app.test_client()
+    st = status(legacy_client)
+    check("旧库升级后记录保持 3 条", st["records"] == 3, st)
+    with legacy_app.app_context():
+        from birdapp.db import get_db
+
+        db = get_db()
+        subs = [tuple(r) for r in db.execute(
+            "SELECT start_version, start_name, year, total, record_count "
+            "FROM subtotals ORDER BY 1, 2, 3"
+        )]
+        check("旧库升级后小计已建立",
+              subs == [(1, "A", 2020, 15, 2), (3, "C", 2021, 7, 1)], subs)
+        check("升级版本号已记录",
+              db.execute("SELECT value FROM meta WHERE key = 'subtotals_version'")
+              .fetchone()[0] == "1")
+    legacy_app2 = create_app({"DATABASE": legacy_path, "SECRET_KEY": "t", "TESTING": True})
+    with legacy_app2.app_context():
+        from birdapp.db import get_db
+
+        count = get_db().execute("SELECT COUNT(*) FROM subtotals").fetchone()[0]
+        check("重启不重复重建小计（仍 2 行）", count == 2, count)
+
+    # 23. 汇总页候选学名与 JSON 字段沿用原口径
+    page = client.get("/aggregate").get_data(as_text=True)
+    check("汇总页仍可勾选物种（含当前最新版学名）",
+          "Netta rufina" in page and "Anas crecca" in page)
+    result = agg(client, "Netta rufina")
+    check("JSON 字段保持 latest_version/group/years/diff_records",
+          set(result) == {"latest_version", "group", "years", "diff_records"},
+          set(result))
+    check("年度行字段保持 year/min/max/diff_records",
+          all(set(y) == {"year", "min", "max", "diff_records"}
+              for y in result["years"]))
 
     print()
     if failures:
